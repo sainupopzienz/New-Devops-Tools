@@ -1,0 +1,293 @@
+#commands
+docker-compose up -d postgres
+docker-compose run --rm kong kong migrations bootstrap
+docker-compose up -d kong
+docker run -d --network host --name hello hashicorp/http-echo -text="Hello World"
+docker compose up -d konga
+
+#Test helloworld
+curl http://localhost:5678
+
+#Register Hello World service:
+
+curl -i -X POST http://localhost:8001/services/ \
+  --data name=hello-service \
+  --data url='http://127.0.0.1:5678'
+
+#Create route:
+
+curl -i -X POST http://localhost:8001/services/hello-service/routes \
+  --data 'paths[]=/hello'
+
+#Test routing through Kong
+curl http://127.0.0.1:8000/hello
+
+#login to konga ui
+http://localhost:1337
+#initially create the user credentials and start add kong api url editing kong configuration 
+#Rate limiting - after certain call api wispond 409
+#List all routes via Admin API
+curl http://localhost:8001/routes
+
+#Option 2: Filter by route path (e.g., /hello)
+
+curl http://localhost:8001/routes | jq '.data[] | select(.paths[] == "/hello") | .id'
+
+#note the id and using that id create a limit of 5 likebelow
+
+curl -i -X POST http://localhost:8001/routes/<ROUTE_ID>/plugins \
+  --data name=rate-limiting \
+  --data config.minute=5 \
+  --data config.policy=local
+
+call app using curl http://localhost:8000/hello -only 5 we get then it throw error 
+
+#Now remove the ratelimit
+
+To re-enable access to your route (like /hello) after it was blocked due to rate limiting, you have a few options depending on what you want:
+🛠 Option 1: Wait for the rate limit to reset
+
+    If your limit is 5 requests per minute, just wait 60 seconds.
+
+    Kong resets the limit automatically based on the time window.
+
+
+🧹 Option 2: Remove or update the rate-limiting plugin
+🔍 Step 1: List plugins for your route:
+
+curl http://localhost:8001/routes/d865c71f-b8c6-464e-b33d-f753e6e5c16c/plugins
+
+This will return a list with plugin IDs.
+
+🗑 Step 2: Delete the rate-limiting plugin:
+
+Copy the "id" of the rate-limiting plugin from the output and run:
+
+curl -X DELETE http://localhost:8001/plugins/<plugin_id>
+
+✅ Access will no longer be rate-limited.
+🧬 Option 3: Update the rate limit (e.g., raise the limit)
+
+Instead of deleting the plugin, you can PATCH it:
+
+curl -X PATCH http://localhost:8001/plugins/<plugin_id> \
+  --data config.minute=20
+
+
+#JWT token addon and Generation Steps
+
+🔐 Step-by-Step: Protect /hello route with JWT
+✅ 1. Enable JWT Plugin on the Route
+
+You can do this via Konga or CLI.
+
+Using Admin API (CLI):
+
+curl -X POST http://localhost:8001/routes/d865c71f-b8c6-464e-b33d-f753e6e5c16c/plugins \
+  --data "name=jwt"
+
+
+👤 2. Create a Consumer
+
+curl -X POST http://localhost:8001/consumers \
+  --data "username=jwtuser"
+
+
+🔑 3. Create JWT Credentials for the Consumer
+
+curl -X POST http://localhost:8001/consumers/jwtuser/jwt \
+  --data "key=mykey" \
+  --data "algorithm=HS256" \
+  --data "secret=mysecret"
+
+You’ll get output like:
+
+{
+  "id": "...",
+  "key": "mykey",
+  "secret": "mysecret",
+  ...
+}
+
+
+🔐 4. Generate a JWT Token
+
+Use a tool like jwt.io or a script. Here's how to generate it with python:
+
+vi main.py
+
+import jwt
+import time
+
+payload = {
+    "iss": "mykey",
+    "exp": int(time.time()) + 3600  # 1 hour expiry
+}
+
+token = jwt.encode(payload, "mysecret", algorithm="HS256")
+print(token)
+
+Save & Exit
+
+🔁 Or use a command-line tool like jwt-cli or Postman to generate the token.
+
+📥 5. Make a Request to /hello with JWT
+
+Use your JWT token (say eyJ...) in the Authorization header:
+
+curl -i http://localhost:8000/hello \
+  -H "Authorization: Bearer <your-jwt-token>"
+
+#Deleting jwt Token from service
+
+For deleting JWT - then go to konga ui then select Routes-->click ID--->select plugins then -----> Disable JWT
+
+#Loadbalancing steps in kong
+
+
+Great! Let's do this in order. We'll:
+
+    ✅ Create two simple "Hello World" containers running on different ports.
+
+    ✅ Register them in Kong under different service names.
+
+    ✅ Enable load balancing via Kong using an upstream.
+
+🔧 Step 1: Create "Hello World" Containers
+
+We’ll use basic Python HTTP servers for this. Here's a simple Docker setup.
+📁 Folder Structure (You can keep this in any directory):
+
+.
+├── helloworld1
+│   └── app.py
+├── helloworld2
+│   └── app.py
+└── docker-compose.yml
+
+🐍 app.py for both services (edit text slightly per service):
+helloworld1/app.py:
+
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return "Hello from service 1"
+
+app.run(host='0.0.0.0', port=5000)
+
+helloworld2/app.py:
+
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return "Hello from service 2"
+
+app.run(host='0.0.0.0', port=5000)
+
+🐳 docker-compose.yml to run both
+
+version: '3.8'
+
+services:
+  helloworld1:
+    build: ./helloworld1
+    ports:
+      - "5001:5000"
+
+  helloworld2:
+    build: ./helloworld2
+    ports:
+      - "5002:5000"
+
+🐳 Dockerfile for both services (identical)
+
+Place in both helloworld1/ and helloworld2/ folders:
+
+FROM python:3.9-slim
+WORKDIR /app
+COPY app.py .
+RUN pip install flask
+CMD ["python", "app.py"]
+
+🏁 Step 2: Build and Run Containers
+
+From the root folder:
+
+docker-compose up -d --build
+
+Now:
+
+    helloworld1 is running on localhost:5001
+
+    helloworld2 is running on localhost:5002
+
+Test both:
+
+curl http://localhost:5001
+# → Hello from service 1
+
+curl http://localhost:5002
+# → Hello from service 2
+
+Next Steps
+
+Once these containers are up, we’ll:
+
+    Register each with Kong as targets under an upstream.
+
+    Set up a service (with a new name) and route.
+
+ 
+⚙️ Step-by-Step Kong Load Balancing Setup
+
+We'll:
+
+    Create an upstream
+
+    Add both containers as targets
+
+    Create a service using the upstream
+
+    Create a route /load
+
+#Create an Upstream
+
+curl -X POST http://localhost:8001/upstreams \
+  --data "name=hello-upstream"
+
+#Add Both Containers as Targets
+
+curl -X POST http://localhost:8001/upstreams/hello-upstream/targets \
+  --data "target=localhost:5001" \
+  --data "weight=100"
+
+curl -X POST http://localhost:8001/upstreams/hello-upstream/targets \
+  --data "target=localhost:5002" \
+  --data "weight=100"
+
+
+#Create a Service Using the Upstream
+curl -X POST http://localhost:8001/services \
+  --data "name=hello-lb-service" \
+  --data "host=hello-upstream" \
+  --data "port=80" \
+  --data "path=/"
+
+
+#Create a Route /load
+curl -X POST http://localhost:8001/services/hello-lb-service/routes \
+  --data "paths[]=/load"
+
+
+#Test its working
+curl http://localhost:8000/load
+
+Note: ---> Delete the service, route , loadbalancer, upstream from konga ui itself
+
+For integrating it with a domain use nginx or loadbalancer then using it map to kong ip ---> serverip:8000(kong's proxy port)
+
+#More options are also there like ip restriction and many more, so try that also using kong

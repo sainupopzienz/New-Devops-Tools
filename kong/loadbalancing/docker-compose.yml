@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  helloworld1:
+    build: ./helloworld1
+    ports:
+      - "5001:5000"
+
+  helloworld2:
+    build: ./helloworld2
+    ports:
+      - "5002:5000"
+

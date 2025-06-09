@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  kong:
+    image: kong:3.4
+    container_name: kong
+    ports:
+      - "8077:8080"   # Proxy port exposed on localhost:8087
+      - "8444:8443"   # Proxy SSL port (optional)
+      - "8001:8001"   # Admin API port (optional)
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8080, 0.0.0.0:8443 ssl
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+    volumes:
+      - ./kong.yml:/kong/declarative/kong.yml
+    networks:
+      - kong-net
+
+networks:
+  kong-net:
+    driver: bridge
+
